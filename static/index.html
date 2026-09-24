@@ -15,6 +15,8 @@
         <strong>事件乙比事件甲晚</strong>发生的时间差区间（分钟，可填负数表示乙更早）。
         系统联立全部区间：若互相矛盾，给出由<strong>原始行号与上下界</strong>构成的闭合矛盾链；
         否则给出以最早事件为第 0 分钟的可行时间线。
+        联立通过后还可在下方做<strong>约束冗余核对</strong>：任选一条原始行，检验删去它之后，
+        其余叙述是否仍必然满足它的时间差区间（可删 / 必要）。
       </p>
     </header>
 
@@ -31,6 +33,7 @@
     </section>
 
     <section id="result" aria-live="polite"></section>
+    <section id="redundancy-result" aria-live="polite"></section>
   </main>
   <script src="/static/app.js"></script>
 </body>

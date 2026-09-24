@@ -74,6 +74,20 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 .button-row { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
 
+.picker-row { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+select {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fdfcf9;
+  color: var(--ink);
+  font-size: 14px;
+}
+select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
 button {
   padding: 8px 18px;
   border-radius: 8px;
