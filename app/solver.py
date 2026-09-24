@@ -9,6 +9,12 @@
 
 引入指向所有事件、权为 0 的虚拟源（实现上等价于把所有距离初始化为 0），
 用 Bellman-Ford 判定：第 N 轮仍可松弛 => 存在负环，即区间互相矛盾。
+
+约束冗余核对（check_redundancy）：删去所选行对应的上、下界两条边后，
+在其余约束构成的图上分别求 甲->乙 与 乙->甲 的单源最短路：
+    甲->乙 最短路 = 其余约束能推出的 t(乙)-t(甲) 最紧上界（不可达则无界）
+    乙->甲 最短路取负 = 其余约束能推出的 t(乙)-t(甲) 最紧下界（不可达则无界）
+仅当推导区间 [下界, 上界] 完全落在所选行区间 [lo, hi] 内时判为“可删”。
 """
 
 from __future__ import annotations
@@ -90,6 +96,27 @@ def parse_text(text: str) -> tuple[list[Row], list[dict]]:
         rows.append(Row(line_no, a, b, low, high))  # type: ignore[arg-type]
 
     return rows, errors
+
+
+def _edge_step(names: list[str], e: Edge) -> dict:
+    """把一条约束边还原为可读步骤：原始行号、方向、所用界（上/下界）与界值。"""
+    if e.kind == "upper":
+        relation = f"{names[e.v]}−{names[e.u]} ≤ {e.bound}"
+        kind_label = "上界（最多）"
+    else:
+        # 边 v -> u、权 -low 对应 names[v]−names[u] >= low，即 u 事件比 v 事件早至少 low
+        relation = f"{names[e.u]}−{names[e.v]} ≥ {e.bound}"
+        kind_label = "下界（最少）"
+    return {
+        "from": names[e.u],
+        "to": names[e.v],
+        "weight": e.w,
+        "line": e.line,
+        "kind": e.kind,
+        "kind_label": kind_label,
+        "bound": e.bound,
+        "relation": relation,
+    }
 
 
 def solve(text: str) -> dict:
@@ -193,25 +220,7 @@ def _conflict_result(names: list[str], pred, start: int, n: int) -> dict:
     # 沿前驱收集是逆序的，翻转回边的正向（u -> v）
     cycle_edges.reverse()
 
-    steps = []
-    for _, e in cycle_edges:
-        if e.kind == "upper":
-            relation = f"{names[e.v]}−{names[e.u]} ≤ {e.bound}"
-            kind_label = "上界（最多）"
-        else:
-            # 边 v -> u、权 -low 对应 names[v]−names[u] >= low，即 u 事件比 v 事件早至少 low
-            relation = f"{names[e.u]}−{names[e.v]} ≥ {e.bound}"
-            kind_label = "下界（最少）"
-        steps.append({
-            "from": names[e.u],
-            "to": names[e.v],
-            "weight": e.w,
-            "line": e.line,
-            "kind": e.kind,
-            "kind_label": kind_label,
-            "bound": e.bound,
-            "relation": relation,
-        })
+    steps = [_edge_step(names, e) for _, e in cycle_edges]
 
     total = sum(s["weight"] for s in steps)
     return {
@@ -221,4 +230,119 @@ def _conflict_result(names: list[str], pred, start: int, n: int) -> dict:
             "weight_sum": total,
             "closes_to": steps[0]["from"] if steps else None,
         },
+    }
+
+
+def _bellman_ford(names: list[str], edges: list[Edge], source: int) -> tuple[list[int | None], list[tuple[int, Edge] | None]]:
+    """单源最短路（调用前已确认无负环）。不可达顶点的距离为 None。"""
+    n = len(names)
+    dist: list[int | None] = [None] * n
+    dist[source] = 0
+    pred: list[tuple[int, Edge] | None] = [None] * n
+
+    for _ in range(n - 1):
+        relaxed = False
+        for e in edges:
+            du = dist[e.u]
+            if du is None:
+                continue
+            cand = du + e.w
+            if dist[e.v] is None or cand < dist[e.v]:
+                dist[e.v] = cand
+                pred[e.v] = (e.u, e)
+                relaxed = True
+        if not relaxed:
+            break
+    return dist, pred
+
+
+def _derive_bound(names: list[str], edges: list[Edge], source: int, target: int) -> tuple[int | None, list[dict]]:
+    """t(target) − t(source) 的最紧上界及其推导路径（source -> target 最短路）。
+
+    返回 (上界, 路径步骤)；不可达时上界为 None、路径为空（该端点标为无界）。
+    source == target 时上界为 0、路径为空（同一事件时间差恒为 0）。
+    """
+    dist, pred = _bellman_ford(names, edges, source)
+    if dist[target] is None:
+        return None, []
+
+    path_edges: list[Edge] = []
+    cur = target
+    while cur != source:
+        step = pred[cur]
+        if step is None:  # 不可达时不会走到这里，防御性退出
+            break
+        pu, e = step
+        path_edges.append(e)
+        cur = pu
+    path_edges.reverse()
+    return dist[target], [_edge_step(names, e) for e in path_edges]
+
+
+def check_redundancy(text: str, line: int) -> dict:
+    """约束冗余核对：删去第 line 行后，求其余约束对该行两事件时间差的最紧区间。
+
+    输入无效或原约束互相冲突时，直接返回 solve() 的现有求解结果。
+    """
+    base = solve(text)
+    if base["status"] != "ok":
+        return base
+
+    rows, _ = parse_text(text)  # solve 已通过，此处必然无校验错误
+    target = next((r for r in rows if r.line == line), None)
+    if target is None:
+        return {
+            "status": "error",
+            "errors": [{"line": line, "message": f"第{line}行不是一条有效约束行（空行或不存在的行号），无法核对。"}],
+        }
+
+    names: list[str] = []
+    index: dict[str, int] = {}
+    for r in rows:
+        for name in (r.a, r.b):
+            if name not in index:
+                index[name] = len(names)
+                names.append(name)
+
+    # 移除所选行对应的上、下界两条约束，其余行照常建边
+    edges: list[Edge] = []
+    for r in rows:
+        if r.line == target.line:
+            continue
+        ia, ib = index[r.a], index[r.b]
+        edges.append(Edge(ia, ib, r.high, r.line, "upper", r.high))
+        edges.append(Edge(ib, ia, -r.low, r.line, "lower", r.low))
+
+    ia, ib = index[target.a], index[target.b]
+    # 上界：t(乙) − t(甲) 的最紧上界 = 甲 -> 乙 最短路
+    high_val, upper_path = _derive_bound(names, edges, ia, ib)
+    # 下界：t(甲) − t(乙) 的最紧上界 = 乙 -> 甲 最短路，取负即 t(乙) − t(甲) 的最紧下界
+    low_val, lower_path = _derive_bound(names, edges, ib, ia)
+    derived_low = -low_val if low_val is not None else None
+    derived_high = high_val
+
+    # 推导区间完全落在所选行区间内 <=> 可删；任一端点无界或超出 <=> 必要
+    removable = (
+        derived_low is not None
+        and derived_high is not None
+        and derived_low >= target.low
+        and derived_high <= target.high
+    )
+
+    return {
+        "status": "ok",
+        "line": target.line,
+        "a": target.a,
+        "b": target.b,
+        "low": target.low,
+        "high": target.high,
+        "derived_low": derived_low,
+        "derived_high": derived_high,
+        "lower_bounded": derived_low is not None,
+        "upper_bounded": derived_high is not None,
+        "lower_path": lower_path,
+        "upper_path": upper_path,
+        "verdict": "removable" if removable else "necessary",
+        "event_count": len(names),
+        "line_count": len(rows),
     }

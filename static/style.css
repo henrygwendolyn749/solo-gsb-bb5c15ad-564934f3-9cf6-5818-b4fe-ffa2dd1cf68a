@@ -72,6 +72,21 @@ textarea {
 
 textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
+/* 约束冗余核对：行选择 */
+.redundancy-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+select {
+  flex: 1;
+  min-width: 260px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fdfcf9;
+  color: var(--ink);
+}
+select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
 .button-row { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
 
 button {
